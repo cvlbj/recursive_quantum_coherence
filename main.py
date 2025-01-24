@@ -1,100 +1,122 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.fft import fft, ifft, fftfreq
+from scipy.fftpack import fft, ifft, fftfreq
 
-# Constants
-hbar = 1.0  # Reduced Planck constant
-m = 1.0     # Mass
-dx = 0.1    # Grid spacing
-dt = 0.01   # Time step
-x_min, x_max = -10, 10  # Grid bounds
-steps = 100  # Number of evolution steps
+# Constants for the simulation
+dx = 0.1  # Spatial resolution
+L = 20.0  # Length of the grid
+x = np.arange(-L / 2, L / 2, dx)  # Spatial grid
+N = len(x)  # Number of grid points
+dt = 0.01  # Time step for evolution
+T_total = 1.0  # Total time of evolution
+steps = int(T_total / dt)  # Number of time steps
 
-# Define the grid
-x = np.arange(x_min, x_max, dx)
-N = len(x)
-k = fftfreq(N, d=dx) * 2 * np.pi
+# Recursive parameters
+recursive_depth = 5  # Number of recursive layers
+fine_dx = dx / 2  # Fine grid resolution for inner layers
+fine_x = np.arange(-L / 2, L / 2, fine_dx)
 
-# Potential and initial wavefunction
-def potential(x):
-    return 0.5 * x**2  # Simple harmonic oscillator potential
+# Define the Gaussian wavepacket
+def gaussian_wavepacket(x, x0=0.0, p0=1.0, sigma=1.0):
+    return np.exp(-0.5 * ((x - x0) / sigma)**2) * np.exp(1j * p0 * x)
 
-def gaussian_wavepacket(x, x0, p0, sigma):
-    return (1/(np.sqrt(sigma * np.sqrt(np.pi)))) * np.exp(-((x - x0)**2) / (2 * sigma**2)) * np.exp(1j * p0 * x / hbar)
+# Potential function (free particle for simplicity)
+def V(x):
+    return np.zeros_like(x)
 
-# Recursive simulation function
-def evolve_wavefunction(psi, V, dt, hbar, m, recursive_depth, grid_scale=1):
-    """
-    Evolve a wavefunction with grid artifacts recursively layered.
-    psi: Initial wavefunction.
-    V: Potential energy.
-    dt: Time step.
-    recursive_depth: Number of recursive layers.
-    grid_scale: Scaling factor for grid artifacts.
-    """
-    # Create artifacts through grid coarsening
-    coarse_dx = dx * grid_scale
-    coarse_x = np.arange(x_min, x_max, coarse_dx)
-    coarse_k = fftfreq(len(coarse_x), d=coarse_dx) * 2 * np.pi
+# Split-operator method for wavefunction evolution
+def split_operator_step(psi, x, dx, dt):
+    k = fftfreq(len(x), d=dx) * 2 * np.pi
+    # Kinetic energy operator
+    kinetic_phase = np.exp(-1j * (k**2) * dt / 2)
+    # Potential energy operator
+    potential_phase = np.exp(-1j * V(x) * dt)
+    # Apply split operator method
+    psi = ifft(kinetic_phase * fft(psi))
+    psi *= potential_phase
+    psi = ifft(kinetic_phase * fft(psi))
+    return psi
 
-    # Recursive container for coherence tracking
+# Recursive evolution function
+def recursive_evolution(psi, x, dx, dt, depth, fine_x, fine_dx):
     coherence_losses = []
+    intermediate_states = []
 
-    def single_layer_evolution(psi, x, k, V, dt):
-        """Perform one evolution step using the split-operator method."""
-        exp_V = np.exp(-1j * V(x) * dt / (2 * hbar))  # Half potential step
-        exp_T = np.exp(-1j * (hbar**2 * k**2 / (2 * m)) * dt / hbar)  # Full kinetic step
+    for d in range(depth):
+        # Evolve on the coarse grid
+        for _ in range(steps):
+            psi = split_operator_step(psi, x, dx, dt)
 
-        psi = exp_V * psi
-        psi_k = fft(psi)  # Fourier transform to momentum space
-        psi_k *= exp_T
-        psi = ifft(psi_k)  # Inverse Fourier transform to position space
-        psi *= exp_V
-        return psi
+        # Evolve on the fine grid (inner layer)
+        fine_psi = gaussian_wavepacket(fine_x)
+        for _ in range(steps):
+            fine_psi = split_operator_step(fine_psi, fine_x, fine_dx, dt)
 
-    for depth in range(recursive_depth):
-        # Evolve the wavefunction on the current grid
-        psi = single_layer_evolution(psi, x, k, V, dt)
+        # Calculate coherence loss (overlap integral)
+        overlap = np.abs(np.sum(np.conj(psi) * np.interp(x, fine_x, fine_psi)) * dx)**2
+        coherence_losses.append(1 - overlap)
 
-        # Introduce grid artifacts
-        psi_coarse = np.interp(coarse_x, x, np.abs(psi)) * np.exp(1j * np.angle(np.interp(coarse_x, x, psi)))
-        psi_coarse = single_layer_evolution(psi_coarse, coarse_x, coarse_k, V, dt)
+        # Store intermediate state
+        intermediate_states.append(np.abs(psi)**2)
 
-        # Map coarse wavefunction back to fine grid and track coherence loss
-        psi_back = np.interp(x, coarse_x, np.abs(psi_coarse)) * np.exp(1j * np.angle(np.interp(x, coarse_x, psi_coarse)))
-        coherence_loss = np.sum(np.abs(psi_back - psi)) / np.sum(np.abs(psi))
-        coherence_losses.append(coherence_loss)
+    return psi, coherence_losses, intermediate_states
 
-        # Update the parent layer wavefunction
-        psi = psi_back
+# Introduce stochastic collapse mechanism
+def stochastic_collapse(psi, x):
+    prob = np.abs(psi)**2
+    prob /= prob.sum()  # Normalize probabilities
+    collapsed_index = np.random.choice(len(x), p=prob)
+    collapsed_state = np.zeros_like(psi)
+    collapsed_state[collapsed_index] = 1.0
+    return collapsed_state
 
-    return psi, coherence_losses
+# Initial wavepacket
+psi = gaussian_wavepacket(x)
 
-# Initial wavefunction and potential
-x0, p0, sigma = 0, 1.0, 1.0  # Initial position, momentum, and spread
-psi_0 = gaussian_wavepacket(x, x0, p0, sigma)
-V = potential
+# Perform recursive evolution
+final_psi, coherence_losses, intermediate_states = recursive_evolution(
+    psi, x, dx, dt, recursive_depth, fine_x, fine_dx
+)
 
-# Evolve the wavefunction recursively
-recursive_depth = 5
-psi_final, coherence_losses = evolve_wavefunction(psi_0, V, dt, hbar, m, recursive_depth, grid_scale=2)
-
-# Visualize results
+# Plot results
 plt.figure(figsize=(10, 6))
-plt.plot(x, np.abs(psi_0)**2, label="Initial |Psi|^2")
-plt.plot(x, np.abs(psi_final)**2, label="Final |Psi|^2 (Recursive)")
-plt.title("Recursive Evolution of Gaussian Wavepacket")
+plt.plot(x, np.abs(psi)**2, label="Initial |Psi|^2")
+plt.plot(x, np.abs(final_psi)**2, label=f"Final |Psi|^2 (Recursive Depth {recursive_depth})")
 plt.xlabel("x")
 plt.ylabel("|Psi|^2")
+plt.title("Recursive Evolution of Gaussian Wavepacket")
 plt.legend()
 plt.grid()
 plt.show()
 
-# Coherence loss over recursive layers
+# Plot coherence loss
 plt.figure(figsize=(10, 6))
-plt.plot(range(1, recursive_depth + 1), coherence_losses, marker='o')
-plt.title("Coherence Loss Across Recursive Layers")
-plt.xlabel("Recursive Layer")
+plt.plot(range(1, recursive_depth + 1), coherence_losses, marker="o")
+plt.xlabel("Recursive Depth")
 plt.ylabel("Coherence Loss")
+plt.title("Coherence Loss Across Recursive Layers")
+plt.grid()
+plt.show()
+
+# Visualize intermediate states
+plt.figure(figsize=(10, 6))
+for i, state in enumerate(intermediate_states):
+    plt.plot(x, state, label=f"Layer {i+1}")
+plt.xlabel("x")
+plt.ylabel("|Psi|^2")
+plt.title("Intermediate States Across Layers")
+plt.legend()
+plt.grid()
+plt.show()
+
+# Simulate stochastic collapse
+collapsed_psi = stochastic_collapse(final_psi, x)
+plt.figure(figsize=(10, 6))
+plt.plot(x, np.abs(final_psi)**2, label="Final |Psi|^2")
+plt.plot(x, np.abs(collapsed_psi)**2, label="Collapsed State", linestyle="--")
+plt.xlabel("x")
+plt.ylabel("|Psi|^2")
+plt.title("Stochastic Collapse of Wavepacket")
+plt.legend()
 plt.grid()
 plt.show()
