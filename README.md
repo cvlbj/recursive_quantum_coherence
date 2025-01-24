@@ -1,3 +1,10 @@
+The intersting parts: each dynamic is different. Understand what we are doing and think if statistics from many cases can be useful
+
+Also the idea of using the recursiveness to check whether loss of coherence can happen with less defined grids could be great for comp.chem. if we can anticipate what will occur.
+
+
+Past:
+
 the simulation so far:
 
 Coherence Preservation with Feedback:

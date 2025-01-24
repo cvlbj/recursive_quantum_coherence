@@ -3,11 +3,12 @@ import matplotlib.pyplot as plt
 
 # Constants and parameters
 x_min, x_max = -10, 10  # Grid range
-N = 256  # Number of grid points
-timesteps = 100  # Number of timesteps
+N = 512  # Number of grid points
+timesteps = 200  # Number of timesteps
 dt = 0.01  # Time step size
 recursion_depth = 5  # Number of recursive layers
 feedback_strength = 0.5  # Strength of the feedback potential
+collapse_probability = 0.1  # Probability of stochastic collapse
 
 # Define the spatial grid
 x = np.linspace(x_min, x_max, N)
@@ -17,6 +18,10 @@ k = np.fft.fftfreq(N, d=dx) * 2 * np.pi
 # Initial Gaussian wavepacket
 def gaussian_wavepacket(x, x0, p0, sigma):
     return (1 / (np.sqrt(2 * np.pi) * sigma)) ** 0.5 * np.exp(-((x - x0) ** 2) / (4 * sigma ** 2) + 1j * p0 * x)
+
+# Periodic potential
+def periodic_potential(x, amplitude, period):
+    return amplitude * np.sin(2 * np.pi * x / period)
 
 # Time evolution operators
 T = np.exp(-0.5j * k**2 * dt)  # Kinetic energy operator
@@ -32,11 +37,17 @@ def recursive_evolution(psi, depth, feedback_strength):
     # Define a feedback potential based on the density
     feedback_potential = feedback_strength * (density - np.mean(density))
 
-    # Potential energy operator with feedback
-    V = np.exp(-1j * feedback_potential * dt)
+    # Total potential (periodic + feedback)
+    V = np.exp(-1j * (periodic_potential(x, amplitude=1.0, period=5.0) + feedback_potential) * dt)
 
     # Perform split-operator step
     psi = np.fft.ifft(T * np.fft.fft(V * psi))
+
+    # Stochastic collapse
+    if np.random.rand() < collapse_probability:
+        collapse_index = np.random.choice(np.arange(len(psi)), p=density/np.sum(density))
+        psi = np.zeros_like(psi)
+        psi[collapse_index] = 1.0
 
     # Recursive step
     psi = recursive_evolution(psi, depth - 1, feedback_strength)
@@ -56,8 +67,8 @@ final_density = np.abs(psi_final) ** 2
 # Plot results
 plt.figure(figsize=(10, 6))
 plt.plot(x, initial_density, label="Initial |Psi|^2")
-plt.plot(x, final_density, label="Final |Psi|^2 (Recursive with Feedback)")
-plt.title("Recursive Evolution of Gaussian Wavepacket with Feedback")
+plt.plot(x, final_density, label="Final |Psi|^2 (Recursive with Feedback and Collapse)")
+plt.title("Recursive Evolution of Gaussian Wavepacket with Feedback and Stochastic Collapse")
 plt.xlabel("x")
 plt.ylabel("|Psi|^2")
 plt.legend()
@@ -73,7 +84,7 @@ for depth in range(1, recursion_depth + 1):
 
 plt.figure(figsize=(10, 6))
 plt.plot(range(1, recursion_depth + 1), coherence_loss, marker='o')
-plt.title("Coherence Loss Across Recursive Layers with Feedback")
+plt.title("Coherence Loss Across Recursive Layers with Feedback and Stochastic Collapse")
 plt.xlabel("Recursive Depth")
 plt.ylabel("Coherence")
 plt.grid()
